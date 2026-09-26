@@ -2,9 +2,8 @@ package com.twt.service.widget
 
 import android.content.Context
 import org.json.JSONObject
+import java.text.SimpleDateFormat
 import java.util.*
-import kotlin.math.ceil
-import kotlin.math.roundToInt
 
 fun readCourseList(context: Context): List<Course> {
     val courseList = mutableListOf<Course>()
@@ -15,22 +14,27 @@ fun readCourseList(context: Context): List<Course> {
     val nightMode = pref.getBoolean("flutter.nightMode", false) &&
             (Calendar.getInstance().get(Calendar.HOUR_OF_DAY) >= 21)
 
-    val day = Calendar.getInstance().get(Calendar.DAY_OF_WEEK)
-
-    val nowDay = day.let {
-        val today = if (it == Calendar.SUNDAY) 7 else it - 1
-        if (nightMode) (today + 1) % 7 else today
+    // 用完整的目标日期处理夜猫子模式，包含跨周、跨月和跨年。
+    val target = Calendar.getInstance().apply { if (nightMode) add(Calendar.DATE, 1) }
+    val localFormat = SimpleDateFormat("yyyy-MM-dd", Locale.ROOT)
+    val dateFormat = SimpleDateFormat("yyyy-MM-dd", Locale.ROOT).apply {
+        timeZone = TimeZone.getTimeZone("UTC")
+        isLenient = false
     }
-    val nowTime: Int = (Calendar.getInstance().timeInMillis / 1000).toInt()
-    val termStart: Int = pref.getLong("flutter.termStart", 1676822400).toInt()
-    val weeks: Double = (nowTime - termStart) / 604800.0
-
-    val nowWeek = ceil(weeks).roundToInt().let {
-        if (nightMode && day == Calendar.SUNDAY) it + 1 else it
+    val targetDate = dateFormat.parse(localFormat.format(target.time))!!
+    val firstDay = Calendar.getInstance(TimeZone.getTimeZone("UTC")).apply {
+        time = dateFormat.parse(localFormat.format(Date(
+            pref.getLong("flutter.termStart", 1676822400) * 1000)))!!
+        add(Calendar.DATE, -((get(Calendar.DAY_OF_WEEK) + 5) % 7))
+    }.time
+    fun weekOf(date: Date) = Math.floorDiv(date.time - firstDay.time, 604800000L).toInt() + 1
+    fun weekdayOf(date: Date) = Calendar.getInstance(TimeZone.getTimeZone("UTC")).run {
+        time = date
+        (get(Calendar.DAY_OF_WEEK) + 5) % 7 + 1
     }
-
-    // 假期里这个nowWeek可能为负或者超出周数上限，这里判断负数，超上限的判断在flag2那里
-    if (nowWeek <= 0) return courseList
+    val nowDay = weekdayOf(targetDate)
+    val nowWeek = weekOf(targetDate)
+    if (nowWeek !in 1..24) return courseList
 
     pref.getString("flutter.courseData", "")?.let {
         if ("" == it) return emptyList()

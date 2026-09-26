@@ -139,7 +139,7 @@ List<List<Pair<Course, int>>> getMergedActiveCourses(
     var start = pair.arrange.unitList.first;
     var end = pair.arrange.unitList.last;
     var day = pair.arrange.weekday - 1;
-    if (day > dayNumber) return;
+    if (day >= dayNumber) return;
     var needAppend = true; // `pair`是否需要外显
     for (int i = start; i <= end; i++) {
       if (unitCountMatrix[day][i - 1] == 2) {
