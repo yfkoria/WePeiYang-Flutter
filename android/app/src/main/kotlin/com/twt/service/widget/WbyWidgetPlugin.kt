@@ -1,9 +1,12 @@
 package com.twt.service.widget
 
 import android.content.Intent
+import android.os.Handler
+import android.os.Looper
 import com.twt.service.common.LogUtil
 import com.twt.service.common.WbyPlugin
 import com.twt.service.message.EventDispatcher
+import com.twt.service.schedule.ClassReminder
 import io.flutter.embedding.engine.plugins.activity.ActivityAware
 import io.flutter.embedding.engine.plugins.activity.ActivityPluginBinding
 import io.flutter.plugin.common.MethodCall
@@ -20,6 +23,8 @@ class WbyWidgetPlugin : WbyPlugin(), ActivityAware, PluginRegistry.NewIntentList
         when (call.method) {
             "refreshScheduleWidget" -> {
                 updateWidget()
+                // Flutter persists the changed course table asynchronously.
+                Handler(Looper.getMainLooper()).postDelayed({ ClassReminder.reschedule(context) }, 500L)
                 result.success(null)
             }
             "refreshEntryQrWidget" -> {

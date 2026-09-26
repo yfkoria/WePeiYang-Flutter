@@ -1,4 +1,7 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:we_pei_yang_flutter/commons/preferences/common_prefs.dart';
 import 'package:we_pei_yang_flutter/commons/themes/template/wpy_theme_data.dart';
 import 'package:we_pei_yang_flutter/commons/util/text_util.dart';
@@ -11,7 +14,82 @@ class ScheduleSettingPage extends StatefulWidget {
   _ScheduleSettingPageState createState() => _ScheduleSettingPageState();
 }
 
-class _ScheduleSettingPageState extends State<ScheduleSettingPage> {
+class _ScheduleSettingPageState extends State<ScheduleSettingPage>
+    with WidgetsBindingObserver {
+  static const _reminderChannel =
+      MethodChannel('com.twt.service/class_reminder');
+  Map<String, dynamic> _reminder = {};
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _loadReminder();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) _loadReminder();
+  }
+
+  Future<void> _loadReminder() async {
+    if (!Platform.isAndroid) return;
+    try {
+      final result =
+          await _reminderChannel.invokeMapMethod<String, dynamic>('status');
+      if (mounted) setState(() => _reminder = result ?? {});
+    } on PlatformException catch (e) {
+      _showReminderError(e.message ?? '读取提醒设置失败');
+    }
+  }
+
+  Future<void> _setReminder(String key, bool value) async {
+    try {
+      final result = await _reminderChannel.invokeMapMethod<String, dynamic>(
+          'setOption', {'key': key, 'value': value});
+      if (mounted) setState(() => _reminder = result ?? {});
+    } on PlatformException catch (e) {
+      _showReminderError(e.message ?? '保存提醒设置失败');
+    }
+  }
+
+  Future<void> _openReminderSetting(String kind) async {
+    try {
+      await _reminderChannel.invokeMethod('openSetting', {'kind': kind});
+    } on PlatformException catch (e) {
+      _showReminderError(e.message ?? '无法打开系统设置');
+    }
+  }
+
+  void _showReminderError(String message) {
+    if (mounted)
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  Widget _reminderSwitch(String title, String key, {String? subtitle}) =>
+      SwitchListTile(
+        title: Text(title),
+        subtitle: subtitle == null ? null : Text(subtitle),
+        value: _reminder[key] == true,
+        onChanged:
+            _reminder.isEmpty ? null : (value) => _setReminder(key, value),
+      );
+
+  Widget _permissionTile(String title, String key, String kind) => ListTile(
+        title: Text(title),
+        subtitle: Text(_reminder[key] == true ? '已开启' : '未开启，点击前往系统设置'),
+        trailing: Icon(
+            _reminder[key] == true ? Icons.check_circle : Icons.open_in_new),
+        onTap: _reminder[key] == true ? null : () => _openReminderSetting(kind),
+      );
+
   final upNumberList = ["5${'天'}", "6${'天'}", "7${'天'}"];
   final downNumberList = ['周一至周五', '周一至周六', '周一至周日'];
   int _index = CommonPreferences.dayNumber.value - 5;
@@ -98,7 +176,7 @@ class _ScheduleSettingPageState extends State<ScheduleSettingPage> {
             alignment: Alignment.centerLeft,
             margin: const EdgeInsets.fromLTRB(35, 20, 35, 0),
             child: Text(
-              "${'课程表'}-${'每周显示天数'}",
+              '课程表设置',
               style: TextUtil.base.bold.sp(28).oldFurthAction(context),
             ),
           ),
@@ -106,7 +184,7 @@ class _ScheduleSettingPageState extends State<ScheduleSettingPage> {
             margin: const EdgeInsets.fromLTRB(35, 15, 35, 20),
             alignment: Alignment.centerLeft,
             child: Text(
-              '课程表页面将会根据选择调整展示的天数。',
+              '调整每周显示天数、上课提醒与自动静音。',
               style: TextUtil.base.regular.sp(11.5).oldThirdAction(context),
             ),
           ),
@@ -134,6 +212,45 @@ class _ScheduleSettingPageState extends State<ScheduleSettingPage> {
               ],
             ),
           ),
+          if (Platform.isAndroid) ...[
+            Padding(
+              padding: const EdgeInsets.fromLTRB(35, 30, 35, 8),
+              child: Text('上课提醒',
+                  style: TextUtil.base.bold.sp(22).oldFurthAction(context)),
+            ),
+            Card(
+              margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 5),
+              elevation: 0,
+              color:
+                  WpyTheme.of(context).get(WpyColorKey.primaryBackgroundColor),
+              child: Column(children: [
+                _reminderSwitch('启用上课提醒', 'enabled',
+                    subtitle: '按课表发送通知；支持时尝试显示小米超级岛'),
+                _reminderSwitch('提前 20 分钟', 'minute20'),
+                _reminderSwitch('提前 10 分钟', 'minute10'),
+                _reminderSwitch('提前 5 分钟', 'minute5'),
+                _reminderSwitch('自动静音', 'silent',
+                    subtitle: '上课前 5 分钟开启，下课后 5 分钟恢复原状态'),
+                _permissionTile('通知权限', 'notifications', 'notifications'),
+                _permissionTile('精确定时权限', 'exact', 'exact'),
+                _permissionTile('勿扰模式控制权限', 'policy', 'policy'),
+                ListTile(
+                  title: const Text('测试顶部提醒'),
+                  subtitle: Text(
+                      '超级岛协议 ${_reminder['protocol'] ?? 0} · 焦点权限${_reminder['focus'] == true ? '已开' : '未开'}'),
+                  trailing: const Icon(Icons.notifications_active_outlined),
+                  onTap: () async {
+                    try {
+                      await _reminderChannel.invokeMethod('test');
+                    } on PlatformException catch (e) {
+                      _showReminderError(e.message ?? '测试通知失败');
+                    }
+                  },
+                ),
+              ]),
+            ),
+            const SizedBox(height: 24),
+          ],
         ],
       ),
     );

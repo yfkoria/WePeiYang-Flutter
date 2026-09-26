@@ -43,8 +43,10 @@ class ClassesService {
     var gpaProvider = Provider.of<GPANotifier>(context, listen: false);
     var courseProvider = Provider.of<CourseProvider>(context, listen: false);
     var examProvider = Provider.of<ExamProvider>(context, listen: false);
-    Future.sync(() async {
+    await Future.sync(() async {
       var mtx = Mutex();
+      var hadFailure = false;
+      var courseUpdated = false;
 
       await mtx.acquire();
       gpaProvider.refreshGPA(
@@ -52,6 +54,7 @@ class ClassesService {
           mtx.release();
         },
         onFailure: (e) {
+          hadFailure = true;
           ToastProvider.error(e.error.toString());
           mtx.release();
         },
@@ -60,9 +63,11 @@ class ClassesService {
       await mtx.acquire();
       courseProvider.refreshCourse(
         onSuccess: () {
+          courseUpdated = true;
           mtx.release();
         },
         onFailure: (e) {
+          hadFailure = true;
           ToastProvider.error(e.error.toString());
           mtx.release();
         },
@@ -74,15 +79,23 @@ class ClassesService {
           mtx.release();
         },
         onFailure: (e) {
+          hadFailure = true;
           ToastProvider.error(e.error.toString());
           mtx.release();
         },
       );
 
       await mtx.acquire();
-      ExperimentService.refreshExperiment(courseProvider)
-          .whenComplete(() => mtx.release());
-      ToastProvider.success("已刷新！");
+      if (courseUpdated) {
+        try {
+          await ExperimentService.refreshExperiment(courseProvider);
+        } catch (_) {
+          hadFailure = true;
+          ToastProvider.error('实验课信息刷新失败');
+        }
+      }
+      mtx.release();
+      if (!hadFailure) ToastProvider.success("已刷新！");
     });
   }
 
@@ -101,6 +114,10 @@ class ClassesService {
   /// 登录总流程：填写图形验证码code -> 获取session和lt -> 在后端加密得到rsa -> 进行sso登录 -> 判断本科/研究生
   /// [code] 为空说明用户没有手动填图形验证码
   static Future<void> login(String name, String pw, {String? code}) async {
+    // 手动验证码弹窗在取验证码前已经 logout 并清理旧会话。
+    if (code == null && CommonPreferences.tjuSessionAccount.value != name) {
+      await clearCachedCookies();
+    }
     var response = await spiderDio.get(
       "https://sso.tju.edu.cn/cas/login",
       options: Options(
@@ -119,19 +136,33 @@ class ClassesService {
       response = await spiderDio.post("https://learning.twt.edu.cn/enc",
           data: FormData.fromMap({'val': name + pw + lt}));
       var rsa = response.data['data'].toString();
-      code ??= await ClassesBackendService.ocr();
+      var captcha = code ?? '';
+      if (captcha.isEmpty) {
+        for (var attempt = 0; attempt < 3; attempt++) {
+          captcha = await ClassesBackendService.ocr();
+          if (captcha.length == 4) break;
+        }
+        if (captcha.length != 4) {
+          throw WpyDioException(error: '验证码识别失败，请重试');
+        }
+      }
       // 登录sso
-      await _ssoLogin(name, pw, code, execution, lt, rsa);
+      await _ssoLogin(name, pw, captcha, execution, lt, rsa);
     }
     await _getIdentity();
+    CommonPreferences.tjuSessionAccount.value = name;
     // 刷新学期数据
     await AuthService.getSemesterInfo();
   }
 
   /// 退出登录
   static Future<void> logout() async {
-    await spiderDio.get("https://sso.tju.edu.cn/cas/logout");
-    await spiderDio.get('https://sso.tju.edu.cn/cas/login');
+    try {
+      await spiderDio.get("https://sso.tju.edu.cn/cas/logout");
+    } finally {
+      await clearCachedCookies();
+      CommonPreferences.tjuSessionAccount.clear();
+    }
   }
 
   /// 进行sso登录
@@ -155,11 +186,21 @@ class ClassesService {
       ),
     );
 
+    final body = res.data.toString();
     if ((res.statusCode == 302) ||
-        res.data.toString().contains("var remind_strong_pwd = 'true'")) return;
+        body.contains("var remind_strong_pwd = 'true'")) return;
 
-    ToastProvider.error('检查办公网账号密码是否正确');
-    throw WpyDioException(error: '检查账号密码正确');
+    if (body.contains('验证码错误') ||
+        body.contains('验证码不正确') ||
+        body.contains('验证码有误')) {
+      throw WpyDioException(error: '验证码未通过，请输入新验证码');
+    }
+    if (body.contains('密码错误') ||
+        body.contains('用户名或密码') ||
+        body.contains('账号或密码')) {
+      throw WpyDioException(error: '办公网账号或密码未通过，请重新绑定');
+    }
+    throw WpyDioException(error: '办公网登录未通过，请核对密码或验证码');
   }
 
   static Future<void> _getIdentity() async {
@@ -211,7 +252,6 @@ class ClassesService {
     );
     final allSemester = ret.data.toString().findArrays(
         "id:([0-9]+),schoolYear:\"([0-9]+)-([0-9]+)\",name:\"(1|2)\"");
-
 
     for (var arr in allSemester) {
       if ("${arr[1]}-${arr[2]} ${arr[3]}" == _currentSemester) {

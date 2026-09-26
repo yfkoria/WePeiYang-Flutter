@@ -9,6 +9,7 @@ import 'package:we_pei_yang_flutter/commons/preferences/common_prefs.dart';
 import 'package:we_pei_yang_flutter/commons/util/toast_provider.dart';
 import 'package:we_pei_yang_flutter/schedule/extension/logic_extension.dart';
 import 'package:we_pei_yang_flutter/schedule/model/course.dart';
+import 'package:we_pei_yang_flutter/schedule/model/schedule_adjustment.dart';
 import 'package:we_pei_yang_flutter/schedule/network/custom_course_service.dart';
 import 'package:we_pei_yang_flutter/schedule/network/schdule_service.dart';
 
@@ -43,15 +44,52 @@ class CourseProvider with ChangeNotifier {
   }
 
   void saveCustomCourseTable() {
+    _persistCourseTable(syncCustomCourses: true);
+  }
+
+  ScheduleAdjustmentPreview previewScheduleAdjustment({
+    required ScheduleAdjustmentType type,
+    required TeachingDay source,
+    TeachingDay? target,
+  }) =>
+      ScheduleAdjustment.preview(
+        courses: totalCourses,
+        weekCount: weekCount,
+        type: type,
+        source: source,
+        target: target,
+      );
+
+  ScheduleAdjustmentPreview applyScheduleAdjustment({
+    required ScheduleAdjustmentType type,
+    required TeachingDay source,
+    TeachingDay? target,
+  }) {
+    final result = ScheduleAdjustment.apply(
+      courses: totalCourses,
+      weekCount: weekCount,
+      type: type,
+      source: source,
+      target: target,
+    );
+    if (result.canApply) {
+      // 一次性课程删除最后一条安排后，清理空课程，避免残留在列表或同步数据中。
+      _schoolCourses.removeWhere((course) => course.arrangeList.isEmpty);
+      _persistCourseTable(syncCustomCourses: false);
+    }
+    return result;
+  }
+
+  void _persistCourseTable({required bool syncCustomCourses}) {
     notifyListeners();
-    var time = DateTime.now().millisecondsSinceEpoch;
-    // local
+    final time = DateTime.now().millisecondsSinceEpoch;
     CommonPreferences.courseData.value =
         json.encode(CourseTable(_schoolCourses, _customCourses));
-    CommonPreferences.customUpdatedAt.value = time;
     _widgetChannel.invokeMethod("refreshScheduleWidget");
-    // remote
-    CustomCourseService.postCustomTable(_customCourses, time);
+    if (syncCustomCourses) {
+      CommonPreferences.customUpdatedAt.value = time;
+      CustomCourseService.postCustomTable(_customCourses, time);
+    }
   }
 
   /// 全部课程
@@ -130,7 +168,10 @@ class CourseProvider with ChangeNotifier {
   }) {
     ScheduleService.fetchCourses(onResult: (courses) {
       if (courses.isEmpty) {
-        // 防止刷出来一个空课表
+        // 保留已有课表，并让调用方结束刷新流程。
+        onFailure?.call(
+          WpyDioException(error: '教务网本学期未返回课程，原课表已保留；请核对教务网页上的课表'),
+        );
         return;
       }
       _schoolCourses = courses;

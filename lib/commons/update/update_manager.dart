@@ -47,6 +47,14 @@ class UpdateManager extends UpdateStatusListener {
   }
 
   Future<void> checkUpdate({bool auto = true}) async {
+    // The in-app update flow only supports Android and iOS. On desktop,
+    // treating every non-Android platform as iOS reads an uninitialized
+    // _iosVersion and crashes during startup.
+    if (!Platform.isAndroid && !Platform.isIOS) {
+      setIdle();
+      return;
+    }
+
     switch (status) {
       case UpdateStatus.idle:
         _auto = auto;

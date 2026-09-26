@@ -24,11 +24,9 @@ class CookieStorage {
   }
 
   Future<void> clear() async {
+    final file = await _ensureOpen();
     _cookies.clear();
-    final file = _file;
-    if (file != null && file.existsSync()) {
-      await file.writeAsString("", mode: FileMode.write, flush: true);
-    }
+    await file.writeAsString("", mode: FileMode.write, flush: true);
   }
 
   Future<void> _init() async {
@@ -43,13 +41,13 @@ class CookieStorage {
         if (line.isEmpty) {
           continue;
         }
-        debugPrint("restoring cookie $line");
         final i = line.indexOf('=');
         final j = line.indexOf(';', i);
         final key = line.substring(0, i);
         final value = line.substring(i + 1, j);
         final expireStr = line.substring(j + 1);
         final expire = DateTime.parse(expireStr);
+        debugPrint("restoring cookie: $key");
         if (now.isAfter(expire)) {
           continue;
         }
@@ -71,7 +69,7 @@ class CookieStorage {
       for (final cookie in _cookies) {
         if (now.isBefore(cookie.expires)) {
           debugPrint(
-              "storing cookie: ${cookie.name}=${cookie.value};${cookie.expires.toIso8601String()}");
+              "storing cookie: ${cookie.name}; expires=${cookie.expires.toIso8601String()}");
           sink
             ..write(cookie.name)
             ..write("=")
@@ -126,7 +124,7 @@ class CookieStorage {
   Future<void> storeFromRes(Response<dynamic> res) async {
     final setCookies = res.headers["Set-Cookie"];
     if (setCookies != null) {
-      debugPrint("Set-Cookie headers $setCookies");
+      debugPrint("Set-Cookie received: count=${setCookies.length}");
       final now = DateTime.now();
       for (final setCookie in setCookies) {
         final i = setCookie.indexOf('=');
@@ -182,7 +180,7 @@ class CookieStorage {
       }
       _cookies.removeAll(remove);
       final resultStr = result.toString();
-      debugPrint("Request Cookies: $resultStr");
+      debugPrint("Request Cookies attached: count=${_cookies.length}");
       return resultStr;
     } else {
       return null;

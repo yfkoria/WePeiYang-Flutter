@@ -17,13 +17,17 @@ import '../../../commons/themes/wpy_theme.dart';
 import '../../../commons/widgets/w_button.dart';
 
 class TjuUnbindDialog extends Dialog {
-  void _unbind(BuildContext context) {
-    ToastProvider.success("解除绑定成功");
-    ClassesService.logout();
+  Future<void> _unbind(BuildContext context) async {
+    try {
+      await ClassesService.logout();
+    } catch (_) {
+      // 本地会话仍会在 logout 的 finally 中清除。
+    }
     CommonPreferences.clearTjuPrefs();
     Provider.of<GPANotifier>(context, listen: false).clear();
     Provider.of<CourseProvider>(context, listen: false).clear();
     Provider.of<ExamProvider>(context, listen: false).clear();
+    ToastProvider.success("解除绑定成功");
     Navigator.pop(context);
   }
 

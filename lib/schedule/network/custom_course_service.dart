@@ -5,6 +5,7 @@ import 'package:we_pei_yang_flutter/commons/network/wpy_dio.dart';
 import 'package:we_pei_yang_flutter/commons/preferences/common_prefs.dart';
 import 'package:we_pei_yang_flutter/commons/util/toast_provider.dart';
 import 'package:we_pei_yang_flutter/schedule/model/course.dart';
+import 'package:we_pei_yang_flutter/schedule/model/week_list_codec.dart';
 
 class CustomCourseDio extends DioAbstract {
   @override
@@ -129,16 +130,22 @@ class CustomCourseService with AsyncTimer {
             .map((course) => {
                   'class_name': course.name,
                   'credit': course.credit,
+                  // 调休可能会在原周次中留下空洞。后端只支持连续、
+                  // 单周或双周区间，因此需要拆成多条可无损表示的记录。
                   'classDetailList': course.arrangeList
-                      .map((arrange) => {
-                            'class_order': _unitList2Str(arrange.unitList),
-                            'classroom': arrange.location,
-                            'this_class_teacher': arrange.teacherList.isEmpty
-                                ? ''
-                                : arrange.teacherList.first,
-                            'which_week': _weekList2Str(arrange.weekList),
-                            'which_weekday': _weekDay2Str(arrange.weekday)
-                          })
+                      .expand((arrange) => encodeWeekListRanges(arrange.weekList)
+                          .map((weekRange) => {
+                                'class_order':
+                                    _unitList2Str(arrange.unitList),
+                                'classroom': arrange.location,
+                                'this_class_teacher':
+                                    arrange.teacherList.isEmpty
+                                        ? ''
+                                        : arrange.teacherList.first,
+                                'which_week': weekRange,
+                                'which_weekday':
+                                    _weekDay2Str(arrange.weekday)
+                              }))
                       .toList()
                 })
             .toList()
@@ -165,16 +172,6 @@ List<int> _weekStr2List(String str) {
     result.add(i);
   }
   return result;
-}
-
-String _weekList2Str(List<int> list) {
-  if (list.length == 1) return list.first.toString();
-  bool hasOdd = list.any((e) => e.isOdd);
-  bool hasEven = list.any((e) => e.isEven);
-  var suffix = '';
-  if (hasOdd && !hasEven) suffix = '单';
-  if (hasEven && !hasOdd) suffix = '双';
-  return '[${list.first}-${list.last}]$suffix';
 }
 
 List<int> _unitStr2List(String str) =>

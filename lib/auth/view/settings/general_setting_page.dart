@@ -627,10 +627,9 @@ class _GeneralSettingPageState extends State<GeneralSettingPage> {
                           mainAxisAlignment: MainAxisAlignment.center,
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text('每周显示天数', style: mainTextStyle),
+                            Text('课程表与上课提醒', style: mainTextStyle),
                             SizedBox(height: 5.h),
-                            Text('${CommonPreferences.dayNumber.value}',
-                                style: hintTextStyle)
+                            Text('显示天数、定时提醒与自动静音', style: hintTextStyle)
                           ],
                         ),
                       ),

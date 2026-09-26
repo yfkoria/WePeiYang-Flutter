@@ -14,12 +14,12 @@ import 'package:we_pei_yang_flutter/commons/util/router_manager.dart';
 import 'package:we_pei_yang_flutter/commons/util/text_util.dart';
 import 'package:we_pei_yang_flutter/commons/widgets/schedule_background.dart';
 import 'package:we_pei_yang_flutter/gpa/view/classes_need_vpn_dialog.dart';
-import 'package:we_pei_yang_flutter/main.dart';
 import 'package:we_pei_yang_flutter/schedule/extension/logic_extension.dart';
 import 'package:we_pei_yang_flutter/schedule/model/course.dart';
 import 'package:we_pei_yang_flutter/schedule/model/course_provider.dart';
 import 'package:we_pei_yang_flutter/schedule/view/course_detail_widget.dart';
 import 'package:we_pei_yang_flutter/schedule/view/course_dialog.dart';
+import 'package:we_pei_yang_flutter/schedule/view/schedule_adjustment_sheet.dart';
 import 'package:we_pei_yang_flutter/schedule/view/week_select_widget.dart';
 
 import '../../commons/themes/wpy_theme.dart';
@@ -37,23 +37,23 @@ class CoursePage extends StatefulWidget {
 }
 
 class _CoursePageState extends State<CoursePage> {
-  /// 进入课程表页面后重设选中周并自动刷新自定义课程
-  _CoursePageState() {
-    var provider =
-        WePeiYangApp.navigatorState.currentContext!.read<CourseProvider>();
-    // 经 shortcut/小组件等入口可能早于启动流程的 readPref 进入本页，
-    // 此时 provider 还是空的，这里幂等地补读一次本地缓存，避免课表空白。
-    if (provider.schoolCourses.isEmpty) {
-      provider.readPref();
-    }
-    provider.quietResetWeek();
-    provider.refreshCustomCourse();
-  }
-
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+
+      /// 进入课程表页面后重设选中周并自动刷新自定义课程。
+      /// Provider 的通知必须等首帧构建完成，否则会在 build 期间触发重建。
+      final provider = context.read<CourseProvider>();
+      // 经 shortcut/小组件等入口可能早于启动流程的 readPref 进入本页，
+      // 此时 provider 还是空的，这里幂等地补读一次本地缓存，避免课表空白。
+      if (provider.schoolCourses.isEmpty) {
+        provider.readPref();
+      }
+      provider.selectedWeek = provider.currentWeek;
+      provider.refreshCustomCourse();
+
       /// 初次使用课表时展示办公网dialog
       if (CommonPreferences.firstClassesDialog.value) {
         CommonPreferences.firstClassesDialog.value = false;
@@ -213,6 +213,23 @@ class _CourseAppBar extends StatelessWidget implements PreferredSizeWidget {
           ),
         ),
       ),
+      Tooltip(
+        message: '调休',
+        child: WButton(
+          onPressed: () => showScheduleAdjustmentSheet(context),
+          child: Container(
+            decoration: BoxDecoration(),
+            padding: EdgeInsets.all(10.r),
+            child: Icon(
+              Icons.event_repeat_rounded,
+              size: 20.r,
+              color: WpyTheme.of(context)
+                  .get(WpyColorKey.brightTextColor)
+                  .withValues(alpha: 0.7),
+            ),
+          ),
+        ),
+      ),
       WButton(
         onPressed: () => takeScreenshot(),
         child: Container(
@@ -238,6 +255,8 @@ class _CourseAppBar extends StatelessWidget implements PreferredSizeWidget {
       actions: actions,
       title: Text(
           'HELLO${(CommonPreferences.lakeNickname.value == '') ? '' : ', ${CommonPreferences.lakeNickname.value}'}',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
           style: TextUtil.base.bright(context).w900.sp(18)),
       titleSpacing: 0,
       systemOverlayStyle: SystemUiOverlayStyle.dark,

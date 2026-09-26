@@ -8,7 +8,6 @@ import 'package:we_pei_yang_flutter/commons/themes/template/wpy_theme_data.dart'
 import 'package:we_pei_yang_flutter/commons/util/text_util.dart';
 import 'package:we_pei_yang_flutter/commons/util/toast_provider.dart';
 
-import '../../../commons/network/classes_backend_service.dart';
 import '../../../commons/network/classes_service.dart';
 import '../../../commons/themes/wpy_theme.dart';
 import '../../../commons/widgets/w_button.dart';
@@ -32,11 +31,7 @@ class _TjuBindPageState extends State<TjuBindPage> {
       return;
     }
     checkNetWork(false);
-    var res = '';
-    while (res.length != 4) {
-      res = await ClassesBackendService.ocr();
-    }
-    await ClassesService.login(tjuuname, tjupasswd, code: res);
+    await ClassesService.login(tjuuname, tjupasswd);
     ToastProvider.success('办公网绑定成功!');
     CommonPreferences.tjuuname.value = tjuuname;
     CommonPreferences.tjupasswd.value = tjupasswd;

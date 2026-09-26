@@ -54,6 +54,9 @@ class ScheduleService {
     } on DioException catch (e) {
       _log('Error in fetchCourses: $e');
       onFailure(e);
+    } catch (e) {
+      _log('Unexpected error in fetchCourses: $e');
+      onFailure(WpyDioException(error: '课表刷新失败，请稍后重试'));
     }
   }
 
@@ -138,12 +141,21 @@ class ScheduleService {
     }
     _log('STEP 5: Received response. Checking session...');
 
-    if (res.data.toString().contains('统一认证系统')) {
+    final innerIndexBody = res.data.toString();
+    if (innerIndexBody.contains('统一认证系统')) {
       _log('Error: Session expired.');
       throw WpyDioException(error: "办公网绑定失效，请重新绑定");
     }
-    final ids = res.data.toString().find("\"ids\",\"([^\"]+)\"");
-    _log('STEP 6: IDs found. Sending POST request for courseTable.action...');
+    final ids = innerIndexBody.find("\"ids\",\"([^\"]+)\"");
+    if (semesterId.isEmpty || ids.isEmpty) {
+      throw WpyDioException(error: '教务网未提供课表查询参数，请重新绑定办公网');
+    }
+    _log(
+      'STEP 6: Request parameters prepared. '
+      'semesterIdEmpty=${semesterId.isEmpty}, '
+      'idsEmpty=${ids.isEmpty}, '
+      'innerIndexLength=${innerIndexBody.length}',
+    );
 
     // 获取课表
     res = await ClassesService.spiderDio.post(
@@ -157,8 +169,32 @@ class ScheduleService {
       },
       options: Options(contentType: Headers.formUrlEncodedContentType),
     );
-    _log('STEP 7: Course table data received. Starting to parse HTML...');
-    return _parseCourseHTML(res.data.toString());
+    final courseTableBody = res.data.toString();
+    final tbodyMatches = RegExp(
+      r'<tbody\b[^>]*>([\s\S]*?)</tbody>',
+      caseSensitive: false,
+    ).allMatches(courseTableBody).toList();
+    final tbodyTdCounts = tbodyMatches
+        .map((match) => RegExp(
+              r'<td\b',
+              caseSensitive: false,
+            ).allMatches(match.group(1) ?? '').length)
+        .join(',');
+    _log(
+      'STEP 7: Course table data received. '
+      'bodyLength=${courseTableBody.length}, '
+      'hasTeachers=${courseTableBody.contains("var teachers")}, '
+      'hasFillTable=${courseTableBody.contains("fillTable")}, '
+      'hasTbody=${courseTableBody.contains("<tbody")}, '
+      'hasTd=${courseTableBody.contains("<td")}, '
+      'taskActivityCount=${RegExp(r"new\s+TaskActivity\s*\(").allMatches(courseTableBody).length}, '
+      'indexAssignmentCount=${RegExp(r"\bindex\s*=").allMatches(courseTableBody).length}, '
+      'tbodyCount=${tbodyMatches.length}, '
+      'tbodyTdCounts=[$tbodyTdCounts], '
+      'tdTagCount=${RegExp(r"<td\b", caseSensitive: false).allMatches(courseTableBody).length}, '
+      'plainTdTagCount=${RegExp(r"<td>", caseSensitive: false).allMatches(courseTableBody).length}',
+    );
+    return _parseCourseHTML(courseTableBody);
   }
 
   /// 解析请求到的html课程数据

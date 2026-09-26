@@ -22,6 +22,9 @@
     <!--        <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW"/>-->
 
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.ACCESS_NOTIFICATION_POLICY" />
 
     <!--高德定位sdk https://lbs.amap.com/api/android-location-sdk/guide/android-location/getlocation -->
     <!--    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />-->
@@ -70,6 +73,18 @@
         android:usesCleartextTraffic="true"
         tools:replace="android:label,android:allowBackup"
         tools:targetApi="m">
+
+        <receiver
+            android:name=".schedule.ClassReminderReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.TIME_SET" />
+                <action android:name="android.intent.action.TIMEZONE_CHANGED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+                <action android:name="android.app.action.SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED" />
+            </intent-filter>
+        </receiver>
 
         <!--        Impeller 打包可用 调试还是坏的-->
         <!--        <meta-data-->

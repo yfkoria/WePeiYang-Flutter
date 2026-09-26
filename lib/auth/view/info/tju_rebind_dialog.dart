@@ -15,16 +15,19 @@ class TjuRebindDialog extends Dialog {
   @override
   Widget build(BuildContext context) {
     return Center(
-      child: Container(
-        // 防止验证码被键盘遮挡
-        margin: EdgeInsets.fromLTRB(
-            25, 0, 25, 25 + MediaQuery.of(context).viewInsets.bottom / 2),
-        padding: const EdgeInsets.all(25),
-        decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(10),
-            color:
-                WpyTheme.of(context).get(WpyColorKey.primaryBackgroundColor)),
-        child: _TjuRebindWidget(),
+      child: Material(
+        type: MaterialType.transparency,
+        child: Container(
+          // 防止验证码被键盘遮挡
+          margin: EdgeInsets.fromLTRB(
+              25, 0, 25, 25 + MediaQuery.of(context).viewInsets.bottom / 2),
+          padding: const EdgeInsets.all(25),
+          decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(10),
+              color:
+                  WpyTheme.of(context).get(WpyColorKey.primaryBackgroundColor)),
+          child: _TjuRebindWidget(),
+        ),
       ),
     );
   }
@@ -57,21 +60,26 @@ class _TjuRebindWidgetState extends State<_TjuRebindWidget> {
   }
 
   void _bind() async {
-    FocusScope.of(context).requestFocus(FocusNode());
+    FocusScope.of(context).unfocus();
     if (captcha == '') {
       ToastProvider.error('验证码不能为空');
       return;
     }
+    var loginSucceeded = false;
     try {
       await ClassesService.getClasses(context, code: captcha);
-      Navigator.pop(context);
+      loginSucceeded = true;
+      if (mounted) Navigator.pop(context);
     } on DioException catch (e) {
       var str = e.error.toString();
       if (str == '网络连接超时') str = '请连接校园网后再次尝试';
       ToastProvider.error(str);
     } finally {
-      codeController.clear();
-      captchaKey.currentState?.refresh();
+      if (!loginSucceeded && mounted) {
+        codeController.clear();
+        setState(() => captcha = '');
+        captchaKey.currentState?.refresh();
+      }
     }
   }
 
@@ -175,7 +183,11 @@ class CaptchaWidgetState extends State<CaptchaWidget> {
   Uint8List? data;
 
   void refresh() async {
-    await ClassesService.logout();
+    try {
+      await ClassesService.logout();
+    } catch (_) {
+      // 服务器退出失败时，本地会话仍已清理，继续获取新验证码。
+    }
     var res = await ClassesService.spiderDio.get(
         'https://sso.tju.edu.cn/cas/code',
         options: Options(responseType: ResponseType.bytes));

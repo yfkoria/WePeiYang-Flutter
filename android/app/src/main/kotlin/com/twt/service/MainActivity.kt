@@ -18,6 +18,7 @@ import com.twt.service.location.WbyLocationPlugin
 import com.twt.service.message.EventDispatcher
 import com.twt.service.message.WbyMessagePlugin
 import com.twt.service.push.WbyPushPlugin
+import com.twt.service.schedule.ClassReminder
 import com.twt.service.share.WbySharePlugin
 import com.twt.service.statistics.WbyStatisticsPlugin
 import com.twt.service.widget.WbyWidgetPlugin
@@ -83,6 +84,11 @@ class MainActivity : FlutterActivity() {
         EventDispatcher.enqueueShortcutIntent(intent)
     }
 
+    override fun onResume() {
+        super.onResume()
+        ClassReminder.reschedule(this)
+    }
+
     // 加入微北洋使用的所有自己写的 plugin
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -137,6 +143,34 @@ class MainActivity : FlutterActivity() {
                     "restartApp" -> restartApp(result)
 
                     else -> result.notImplemented()
+                }
+            }
+
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "com.twt.service/class_reminder")
+            .setMethodCallHandler { call, result ->
+                try {
+                    when (call.method) {
+                        "status" -> result.success(ClassReminder.status(this))
+                        "setOption" -> {
+                            ClassReminder.setOption(this, call.argument<String>("key")!!, call.argument<Boolean>("value")!!)
+                            result.success(ClassReminder.status(this))
+                        }
+                        "openSetting" -> {
+                            ClassReminder.openSetting(this, call.argument<String>("kind")!!)
+                            result.success(null)
+                        }
+                        "test" -> {
+                            if (ClassReminder.status(this)["notifications"] != true) {
+                                result.error("NOTIFICATION_DISABLED", "请先开启通知权限", null)
+                            } else {
+                                ClassReminder.test(this)
+                                result.success(null)
+                            }
+                        }
+                        else -> result.notImplemented()
+                    }
+                } catch (e: Exception) {
+                    result.error("CLASS_REMINDER", e.message, null)
                 }
             }
 

@@ -79,6 +79,7 @@ class CommonPreferences {
   static final isBindTju = PrefsBean<bool>('bindtju');
   static final tjuuname = PrefsBean<String>('tjuuname');
   static final tjupasswd = PrefsBean<String>('tjupasswd');
+  static final tjuSessionAccount = PrefsBean<String>('tjuSessionAccount');
 
   /// 自定义课表
   static final customCourseToken = PrefsBean<String>('customCourseToken');
@@ -273,6 +274,7 @@ class CommonPreferences {
     isBindTju.clear();
     tjuuname.clear();
     tjupasswd.clear();
+    tjuSessionAccount.clear();
   }
 }
 
