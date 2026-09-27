@@ -254,8 +254,12 @@ object ClassReminder {
         }
         val content = if (location.isBlank()) "$minutes 分钟后上课" else "$minutes 分钟后上课 · $location"
         val click = PendingIntent.getActivity(context, id, Intent(context, MainActivity::class.java), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-        val builder = if (Build.VERSION.SDK_INT >= 26) Notification.Builder(context, CHANNEL) else Notification.Builder(context)
-            .setSmallIcon(R.drawable.push_small)
+        val builder = if (Build.VERSION.SDK_INT >= 26) {
+            Notification.Builder(context, CHANNEL)
+        } else {
+            Notification.Builder(context)
+        }
+        builder.setSmallIcon(R.drawable.push_small)
             .setContentTitle(name)
             .setContentText(content)
             .setContentIntent(click)
