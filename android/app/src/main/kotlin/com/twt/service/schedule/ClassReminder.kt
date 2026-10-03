@@ -28,6 +28,9 @@ object ClassReminder {
     private const val ACTION_REFRESH = "com.twt.service.schedule.REFRESH"
     private const val FIRST_ID = 71000
     private const val REFRESH_ID = 71999
+    private const val SILENCE_TEST_ID = 72000
+    private const val PINK = "#FF80AB"
+    private const val COURSE_PIC = "miui.focus.pic_course"
     private val starts = listOf("08:30", "09:20", "10:25", "11:15", "13:30", "14:20", "15:25", "16:15", "18:30", "19:20", "20:10", "21:00")
     private val ends = listOf("09:15", "10:05", "11:10", "12:00", "14:15", "15:05", "16:10", "17:00", "19:15", "20:05", "20:55", "21:45")
 
@@ -38,10 +41,14 @@ object ClassReminder {
 
     fun status(context: Context): Map<String, Any> {
         val p = prefs(context)
+        val testUntil = p.getLong("silenceTestUntil", 0L)
+        if (testUntil > 0L && testUntil <= System.currentTimeMillis()) restoreSilence(context)
         val exact = Build.VERSION.SDK_INT < 31 || alarms(context).canScheduleExactAlarms()
         return mapOf(
             "enabled" to p.getBoolean("enabled", false),
             "silent" to p.getBoolean("silent", false),
+            "silenceTestUntil" to p.getLong("silenceTestUntil", 0L),
+            "ringerMode" to context.getSystemService(AudioManager::class.java).ringerMode,
             "minute20" to p.getBoolean("minute20", true),
             "minute10" to p.getBoolean("minute10", true),
             "minute5" to p.getBoolean("minute5", true),
@@ -119,10 +126,11 @@ object ClassReminder {
                             val end = at(date, ends[last])
                             val name = course.optString("name", "课程")
                             val location = arrangement.optString("location", "")
+                            val teacher = teachers(arrangement).ifBlank { teachers(course) }
                             val notificationId = ("$kind:$i:$j:${date.timeInMillis}").hashCode()
                             for (minutes in listOf(20, 10, 5)) {
                                 if (p.getBoolean("minute$minutes", true) && start - minutes * 60000L > now) {
-                                    events.add(Event(start - minutes * 60000L, "remind", name, location, minutes, notificationId, start))
+                                    events.add(Event(start - minutes * 60000L, "remind", name, location, minutes, notificationId, start, teacher))
                                 }
                             }
                             if (start > now) events.add(Event(start, "dismiss", "", "", 0, notificationId, start))
@@ -150,7 +158,7 @@ object ClassReminder {
             }
         }
         if (mergedEnd != 0L) addQuietWindow(events, mergedStart, mergedEnd, now)
-        if (quiet.none { it.first <= now && now < it.second }) restoreSilence(app)
+        if (p.getLong("silenceTestUntil", 0L) == 0L && quiet.none { it.first <= now && now < it.second }) restoreSilence(app)
 
         events.sortBy { it.at }
         events.forEachIndexed { index, event ->
@@ -163,6 +171,7 @@ object ClassReminder {
                 putExtra("minutes", event.minutes)
                 putExtra("notificationId", event.notificationId)
                 putExtra("classStart", event.classStart)
+                putExtra("teacher", event.teacher)
             }
             schedule(app, event.at, id, intent)
         }
@@ -176,6 +185,13 @@ object ClassReminder {
         if (start <= now && now < end) events.add(Event(now + 1000L, "silenceStart"))
         else if (start > now) events.add(Event(start, "silenceStart"))
         if (end > now) events.add(Event(end, "silenceEnd"))
+    }
+
+    private fun teachers(source: JSONObject): String {
+        val list = source.optJSONArray("teacherList") ?: return ""
+        return (0 until list.length()).mapNotNull { index ->
+            (list.opt(index) as? String)?.trim()?.takeIf { it.isNotEmpty() }
+        }.distinct().joinToString("、")
     }
 
     private fun at(day: Calendar, hhmm: String): Long = (day.clone() as Calendar).apply {
@@ -204,21 +220,35 @@ object ClassReminder {
 
     fun handle(context: Context, intent: Intent) {
         if (intent.action != ACTION_EVENT) {
+            // A reboot/time change must not leave a short test owning the ringer state.
+            if (prefs(context).getLong("silenceTestUntil", 0L) > 0L) restoreSilence(context)
             reschedule(context)
             return
         }
         when (intent.getStringExtra("kind")) {
-            "remind" -> if (prefs(context).getBoolean("enabled", false)) post(context, intent.getStringExtra("name") ?: "课程", intent.getStringExtra("location") ?: "", intent.getIntExtra("minutes", 5), intent.getIntExtra("notificationId", 0), intent.getLongExtra("classStart", 0L))
+            "remind" -> if (prefs(context).getBoolean("enabled", false)) post(context, intent.getStringExtra("name") ?: "课程", intent.getStringExtra("location") ?: "", intent.getIntExtra("notificationId", 0), intent.getLongExtra("classStart", 0L), intent.getStringExtra("teacher") ?: "")
             "dismiss" -> notifications(context).cancel(intent.getIntExtra("notificationId", 0))
             "silenceStart" -> silence(context)
             "silenceEnd" -> restoreSilence(context)
+            "silenceTestEnd" -> {
+                val until = prefs(context).getLong("silenceTestUntil", 0L)
+                if (until > 0L && until <= System.currentTimeMillis()) {
+                    restoreSilence(context)
+                    reschedule(context)
+                }
+            }
         }
     }
 
-    private fun silence(context: Context) {
-        if (!prefs(context).getBoolean("enabled", false) || !prefs(context).getBoolean("silent", false)) return
+    private fun silence(context: Context, forTest: Boolean = false) {
+        if (!forTest && (!prefs(context).getBoolean("enabled", false) || !prefs(context).getBoolean("silent", false))) return
         val audio = context.getSystemService(AudioManager::class.java)
         val p = prefs(context)
+        if (!forTest && p.getLong("silenceTestUntil", 0L) > 0L) {
+            // A real class takes ownership, retaining the original pre-test ringer mode.
+            alarms(context).cancel(pending(context, SILENCE_TEST_ID, ACTION_EVENT))
+            p.edit().remove("silenceTestUntil").commit()
+        }
         if (p.getBoolean("active", false)) return
         val original = audio.ringerMode
         if (original == AudioManager.RINGER_MODE_SILENT) return
@@ -232,27 +262,74 @@ object ClassReminder {
 
     private fun restoreSilence(context: Context) {
         val p = prefs(context)
-        if (!p.getBoolean("active", false)) return
         val audio = context.getSystemService(AudioManager::class.java)
         try {
-            if (audio.ringerMode == AudioManager.RINGER_MODE_SILENT) {
-                audio.ringerMode = p.getInt("original", AudioManager.RINGER_MODE_NORMAL)
+            if (p.getBoolean("active", false) && audio.ringerMode == AudioManager.RINGER_MODE_SILENT) {
+                val original = p.getInt("original", AudioManager.RINGER_MODE_NORMAL)
+                audio.ringerMode = original
+                check(audio.ringerMode == original) { "系统未恢复铃声模式，请检查勿扰模式控制权限" }
             }
-            p.edit().putBoolean("active", false).commit()
-        } catch (e: SecurityException) {
+            p.edit().putBoolean("active", false).remove("silenceTestUntil").commit()
+            alarms(context).cancel(pending(context, SILENCE_TEST_ID, ACTION_EVENT))
+        } catch (e: RuntimeException) {
             Log.w(TAG, "Could not restore ringer mode", e)
         }
     }
 
-    fun test(context: Context) = post(context, "测试课程", "测试教室", 5, 71998, System.currentTimeMillis() + 300000L)
+    fun testSilence(context: Context): String {
+        val p = prefs(context)
+        if (p.getLong("silenceTestUntil", 0L) > 0L) {
+            restoreSilence(context)
+            check(!p.getBoolean("active", false)) { "恢复失败，请检查勿扰模式控制权限后重试" }
+            reschedule(context)
+            return "已结束测试，保留手动调整或恢复测试前状态"
+        }
+        check(!p.getBoolean("active", false)) { "正在按课表静音，请在课程结束后测试" }
+        if (context.getSystemService(AudioManager::class.java).ringerMode == AudioManager.RINGER_MODE_SILENT) {
+            return "当前已处于静音模式，未改变设置"
+        }
+        check(notifications(context).isNotificationPolicyAccessGranted) { "请先开启勿扰模式控制权限" }
+        check(Build.VERSION.SDK_INT < 31 || alarms(context).canScheduleExactAlarms()) { "请先开启精确定时权限，以便自动恢复" }
+        val until = System.currentTimeMillis() + 10000L
+        val intent = Intent(context, ClassReminderReceiver::class.java).apply {
+            action = ACTION_EVENT
+            putExtra("kind", "silenceTestEnd")
+        }
+        p.edit().putLong("silenceTestUntil", until).commit()
+        try {
+            // Schedule the recovery before changing audio; it survives leaving the app/process death.
+            alarms(context).setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, until,
+                PendingIntent.getBroadcast(context, SILENCE_TEST_ID, intent,
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE))
+            silence(context, forTest = true)
+            check(p.getBoolean("active", false) && context.getSystemService(AudioManager::class.java).ringerMode == AudioManager.RINGER_MODE_SILENT) {
+                "系统未进入静音，请检查勿扰模式控制权限"
+            }
+        } catch (e: Exception) {
+            restoreSilence(context)
+            throw e
+        }
+        return "已进入静音，约 10 秒后恢复；再次点击可提前结束"
+    }
 
-    private fun post(context: Context, name: String, location: String, minutes: Int, id: Int, classStart: Long) {
+    // A short sample crosses a minute boundary quickly and uses the real reminder renderer.
+    fun test(context: Context) = post(context, "高等数学 A（上）", "45教 A203", 71998, System.currentTimeMillis() + 125000L, "张明")
+
+    private fun post(context: Context, name: String, location: String, id: Int, classStart: Long, teacher: String) {
         if (Build.VERSION.SDK_INT >= 33 && context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) return
         val manager = notifications(context)
+        val now = System.currentTimeMillis()
+        val remaining = classStart - now
+        // Delayed alarms must not create a negative timer after the class has started.
+        if (remaining <= 0L) {
+            manager.cancel(id)
+            return
+        }
         if (Build.VERSION.SDK_INT >= 26) {
             manager.createNotificationChannel(NotificationChannel(CHANNEL, "上课提醒", NotificationManager.IMPORTANCE_HIGH))
         }
-        val content = if (location.isBlank()) "$minutes 分钟后上课" else "$minutes 分钟后上课 · $location"
+        val content = listOf("教师：${teacher.ifBlank { "未填写" }}", location.takeIf { it.isNotBlank() })
+            .filterNotNull().joinToString(" · ")
         val click = PendingIntent.getActivity(context, id, Intent(context, MainActivity::class.java), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         val builder = if (Build.VERSION.SDK_INT >= 26) {
             Notification.Builder(context, CHANNEL)
@@ -262,40 +339,73 @@ object ClassReminder {
         builder.setSmallIcon(R.drawable.push_small)
             .setContentTitle(name)
             .setContentText(content)
+            .setSubText("上课倒计时")
+            .setWhen(classStart)
+            .setShowWhen(true)
+            .setUsesChronometer(true)
+            .setChronometerCountDown(true)
+            .setColor(android.graphics.Color.parseColor(PINK))
             .setContentIntent(click)
             .setAutoCancel(true)
         if (Build.VERSION.SDK_INT >= 26) {
-            builder.setTimeoutAfter((classStart - System.currentTimeMillis()).coerceAtLeast(10000L))
+            builder.setTimeoutAfter(remaining)
         }
         val notification = builder.build()
         // The OS ignores these extras on unsupported versions. OS4 may report a new protocol value.
         if (Settings.System.getInt(context.contentResolver, "notification_focus_protocol", 0) >= 3 ||
             Build.MANUFACTURER.equals("Xiaomi", ignoreCase = true)) {
+            // Both surfaces count down to the same absolute start time inside System UI.
+            val timer = JSONObject()
+                .put("timerType", -1)
+                .put("timerWhen", classStart)
+                .put("timerTotal", remaining)
+                .put("timerSystemCurrent", now)
             val params = JSONObject().put("param_v2", JSONObject()
                 .put("protocol", 1)
                 .put("business", "class_reminder")
                 .put("islandFirstFloat", true)
                 .put("enableFloat", true)
                 .put("updatable", true)
-                .put("timeout", minutes + 1)
-                .put("aodTitle", "$minutes 分钟后上课")
+                .put("timeout", (remaining + 59999L) / 60000L)
+                .put("aodTitle", name)
                 .put("param_island", JSONObject()
                     .put("islandProperty", 1)
-                    .put("islandTimeout", (minutes + 1) * 60)
+                    .put("highlightColor", PINK)
+                    .put("islandTimeout", (remaining + 999L) / 1000L)
                     .put("bigIslandArea", JSONObject().put("imageTextInfoLeft", JSONObject()
                         .put("type", 1)
-                        .put("picInfo", JSONObject().put("type", 1).put("pic", "miui.focus.pic_course"))
+                        .put("picInfo", JSONObject().put("type", 1).put("pic", COURSE_PIC))
                         .put("textInfo", JSONObject()
                             .put("title", name.take(4))
-                            .put("content", "${minutes}分钟"))))
+                            .put("showHighlightColor", true)))
+                        .put("sameWidthDigitInfo", JSONObject()
+                            .put("timerInfo", timer)
+                            .put("content", "上课")
+                            .put("showHighlightColor", true)))
                     .put("smallIslandArea", JSONObject().put("picInfo", JSONObject()
                         .put("type", 1)
-                        .put("pic", "miui.focus.pic_course"))))
-                .put("baseInfo", JSONObject().put("title", name).put("content", content).put("type", 2)))
+                        .put("pic", COURSE_PIC))))
+                // Official text + icon + hint template keeps the full course details above the timer.
+                .put("baseInfo", JSONObject().put("title", name).put("content", content).put("type", 2))
+                .put("picInfo", JSONObject().put("type", 1).put("pic", COURSE_PIC))
+                .put("hintInfo", JSONObject()
+                    .put("type", 2)
+                    .put("content", "距离上课")
+                    .put("timerInfo", timer)
+                    .put("colorTitle", PINK).put("colorTitleDark", PINK)
+                    .put("actionInfo", JSONObject()
+                        .put("action", "miui.focus.action_open")
+                        .put("actionTitleColor", PINK).put("actionTitleColorDark", PINK))))
             val pics = android.os.Bundle().apply {
-                putParcelable("miui.focus.pic_course", android.graphics.drawable.Icon.createWithResource(context, R.drawable.push_small))
+                putParcelable(COURSE_PIC, android.graphics.drawable.Icon.createWithResource(context, R.drawable.ic_course_island))
+            }
+            val actions = android.os.Bundle().apply {
+                putParcelable("miui.focus.action_open", Notification.Action.Builder(
+                    android.graphics.drawable.Icon.createWithResource(context, R.drawable.ic_course_island),
+                    "打开微北洋", click).build())
             }
             notification.extras.putBundle("miui.focus.pics", pics)
+            notification.extras.putBundle("miui.focus.actions", actions)
             notification.extras.putString("miui.focus.param", params.toString())
         }
         manager.notify(id, notification)
@@ -314,7 +424,8 @@ object ClassReminder {
         val location: String = "",
         val minutes: Int = 0,
         val notificationId: Int = 0,
-        val classStart: Long = 0L
+        val classStart: Long = 0L,
+        val teacher: String = ""
     )
 }
 

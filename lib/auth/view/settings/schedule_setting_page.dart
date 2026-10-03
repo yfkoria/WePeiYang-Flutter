@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -19,6 +20,8 @@ class _ScheduleSettingPageState extends State<ScheduleSettingPage>
   static const _reminderChannel =
       MethodChannel('com.twt.service/class_reminder');
   Map<String, dynamic> _reminder = {};
+  Timer? _silenceTestTimer;
+  bool _silenceTestBusy = false;
 
   @override
   void initState() {
@@ -29,6 +32,7 @@ class _ScheduleSettingPageState extends State<ScheduleSettingPage>
 
   @override
   void dispose() {
+    _silenceTestTimer?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
@@ -43,7 +47,15 @@ class _ScheduleSettingPageState extends State<ScheduleSettingPage>
     try {
       final result =
           await _reminderChannel.invokeMapMethod<String, dynamic>('status');
-      if (mounted) setState(() => _reminder = result ?? {});
+      if (!mounted) return;
+      setState(() => _reminder = result ?? {});
+      _silenceTestTimer?.cancel();
+      final until = _reminder['silenceTestUntil'] as int? ?? 0;
+      final remaining = until - DateTime.now().millisecondsSinceEpoch;
+      if (remaining > 0) {
+        _silenceTestTimer =
+            Timer(Duration(milliseconds: remaining + 300), _loadReminder);
+      }
     } on PlatformException catch (e) {
       _showReminderError(e.message ?? '读取提醒设置失败');
     }
@@ -56,6 +68,20 @@ class _ScheduleSettingPageState extends State<ScheduleSettingPage>
       if (mounted) setState(() => _reminder = result ?? {});
     } on PlatformException catch (e) {
       _showReminderError(e.message ?? '保存提醒设置失败');
+    }
+  }
+
+  Future<void> _testSilence() async {
+    if (_silenceTestBusy) return;
+    setState(() => _silenceTestBusy = true);
+    try {
+      final message = await _reminderChannel.invokeMethod<String>('testSilence');
+      if (message != null) _showReminderError(message);
+    } on PlatformException catch (e) {
+      _showReminderError(e.message ?? '静音测试失败');
+    } finally {
+      await _loadReminder();
+      if (mounted) setState(() => _silenceTestBusy = false);
     }
   }
 
@@ -235,8 +261,24 @@ class _ScheduleSettingPageState extends State<ScheduleSettingPage>
                 _permissionTile('精确定时权限', 'exact', 'exact'),
                 _permissionTile('勿扰模式控制权限', 'policy', 'policy'),
                 ListTile(
-                  title: const Text('测试顶部提醒'),
+                  title: Text((_reminder['silenceTestUntil'] as int? ?? 0) > 0
+                      ? '结束静音测试并恢复'
+                      : '测试静音（10 秒）'),
                   subtitle: Text(
+                      '当前：${switch (_reminder['ringerMode']) { 0 => '静音', 1 => '振动', 2 => '正常响铃', _ => '读取中' }}\n'
+                      '自动恢复测试前状态，不调整媒体或闹钟音量'),
+                  trailing: Icon((_reminder['silenceTestUntil'] as int? ?? 0) > 0
+                      ? Icons.undo
+                      : Icons.volume_off_outlined),
+                  onTap: _reminder.isEmpty || _silenceTestBusy
+                      ? null
+                      : _testSilence,
+                ),
+                ListTile(
+                  title: const Text('测试顶部提醒（2 分 05 秒）'),
+                  subtitle: Text(
+                      '演示：高等数学 A（上）· 张明 · 45教 A203\n'
+                      '发送后返回桌面查看倒计时\n'
                       '超级岛协议 ${_reminder['protocol'] ?? 0} · 焦点权限${_reminder['focus'] == true ? '已开' : '未开'}'),
                   trailing: const Icon(Icons.notifications_active_outlined),
                   onTap: () async {

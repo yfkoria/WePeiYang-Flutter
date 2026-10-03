@@ -151,6 +151,7 @@ class MainActivity : FlutterActivity() {
                 try {
                     when (call.method) {
                         "status" -> result.success(ClassReminder.status(this))
+                        "testSilence" -> result.success(ClassReminder.testSilence(this))
                         "setOption" -> {
                             ClassReminder.setOption(this, call.argument<String>("key")!!, call.argument<Boolean>("value")!!)
                             result.success(ClassReminder.status(this))
